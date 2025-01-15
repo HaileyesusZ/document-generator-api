@@ -7,11 +7,15 @@ import {
 } from "./types/CreateSimpleDocument.type";
 import simpleDocumentValidator from "./validator/SimpleDocumentValidator";
 import { error } from "console";
-import { getDB } from "../../database";
+import { getClient, getDB } from "../../database";
 import { ObjectId } from "mongodb";
 import { GetSimpleDocumentsResponse } from "./types/GetSimpleDocumentsResponse.type";
 import { GetSimpleDocumentResponse } from "./types/GetSimpleDocumentResponse.type";
 import { DeleteSimpleDocumentResponse } from "./types/DeleteSimpleDocument.type";
+import {
+  UpdateSimpleDocumentRequest,
+  UpdateSimpleDocumentResponse,
+} from "./types/UpdateSimpleDocument.type";
 
 const documentRouter = express.Router();
 
@@ -44,7 +48,6 @@ documentRouter.post(
         updated_at: new Date().toISOString(),
       };
       const response = await SimpleDocumentSchema.insertOne(documentData);
-      console.log("🚀 ~ response:", response);
 
       res.send({
         data: { _id: response.insertedId, documentData },
@@ -109,12 +112,62 @@ documentRouter.get(
   }
 );
 
-documentRouter.put("/:id", async (req, res) => {
-  // transaction / session here
-  // validation
-  // update
-  // may abort transaction
-});
+documentRouter.put(
+  "/:id",
+  async (
+    req: Request<
+      { id: string },
+      UpdateSimpleDocumentResponse,
+      UpdateSimpleDocumentRequest
+    >,
+    res: Response
+  ) => {
+    const session = getClient().startSession();
+    try {
+      session.startTransaction();
+      // validation
+
+      const { body: data, params } = req;
+      const { id } = params;
+      const isValid = simpleDocumentValidator.update(data);
+      if (!isValid) {
+        res.status(400).send({
+          error: "request data is not valid",
+        });
+        return;
+      }
+
+      const SimpleDocumentSchema =
+        getDB().collection<SimpleDocument>("documents");
+
+      const documentData = {
+        ...data,
+        updated_at: new Date().toISOString(),
+      };
+
+      console.log("🚀 ~ documentData:", documentData);
+
+      const response = await SimpleDocumentSchema.findOneAndUpdate(
+        { _id: new ObjectId(id) },
+        { $set: documentData},
+        {
+          session,
+        }
+      );
+
+      console.log("🚀 ~ response:", response);
+      res.send({
+        data: response,
+      });
+      session.commitTransaction();
+    } catch (error) {
+      console.error(error);
+      session.abortTransaction();
+    } finally {
+      session.endSession();
+    }
+  }
+);
 
 documentRouter.delete(
   "/:id",
